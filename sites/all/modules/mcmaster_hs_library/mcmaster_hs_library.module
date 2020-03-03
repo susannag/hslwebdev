@@ -1,0 +1,621 @@
+<?php
+
+define('LIBGUIDES_URL','https://lgapi-ca.libapps.com');
+define('LIBCAL_URL', 'https://api2-ca.libcal.com');
+
+function mcmaster_hs_library_form_alter(&$form, $form_state, $form_id) {
+	// force intro text to only use intro text format
+	if (!empty($form['field_intro_text'])) {
+		$form['field_intro_text']['#after_build'][] = 'mcmaster_hs_library_leading_text_alter_textformat_options';
+	}
+		
+	if ($form_id == 'node_delete_confirm') {
+		// redirect back to the parent if the parent exists
+		if ((!empty($form['#node']->field_section[LANGUAGE_NONE][0]['target_id'])) || (!empty($form['#node']->field_parent_page[LANGUAGE_NONE][0]['target_id']))) {
+			$form['actions']['submit']['#submit'][] = 'node_delete_confirm_submit';
+			$form['actions']['submit']['#submit'][] = 'mcmaster_hs_library_node_delete_redirect';
+		}
+	}
+	
+	// hide the libguide id fields from editing manually ...
+	if (!empty($form['field_libguide_id'])) {
+		$form['field_libguide_id']['#access'] = false;
+	}
+	
+	if ($form_id == 'views_exposed_form') {
+		if ($form['#id'] == 'views-exposed-form-guides-tutorials-page-1') {
+			$form['submit']['#attributes']['class'][]='element-invisible';
+			$form['field_guide_type_value']['#attributes']['class'][]='custom-select mb-2 mr-sm-2 mb-sm-0';
+			$form['field_guide_type_value']['#options']['All'] = 'All Types';
+			$form['field_program_tid']['#attributes']['class'][]='custom-select mb-2 mr-sm-2 mb-sm-0';
+			$form['field_program_tid']['#options']['All'] = 'All Subjects';
+			$form['field_user_group_tid']['#attributes']['class'][]='custom-select mb-2 mr-sm-2 mb-sm-0';
+			$form['field_user_group_tid']['#options']['All'] = 'All User Groups';
+			$form['combine']['#suffix'] = '<div class="input-group-append">
+								<button id="custom-submit" class="btn btn-secondary btn-search" type="button"><span class="sr-only">Search</span></button>
+							<button class="btn btn-secondary" id="form-reset" style="position: absolute;">' . t('Clear') . '</button></div>';
+	    	unset($form['reset']);				
+		}
+		if ($form['#id'] == 'views-exposed-form-news-page-1') {
+			$form['submit']['#attributes']['class'][]='element-invisible';
+			$form['field_news_category_tid']['#attributes']['class'][]='custom-select mb-2 mr-sm-2 mb-sm-0';
+			$form['field_news_category_tid']['#options']['All'] = 'News Category';
+		}
+	}
+}
+
+
+function mcmaster_hs_library_node_delete_redirect($form, &$form_state){
+	$parent = '';
+	if (!empty($form['#node']->field_section[LANGUAGE_NONE][0]['target_id'])) {
+		$parent = $form['#node']->field_section[LANGUAGE_NONE][0]['target_id'];
+	}
+	if (!empty($form['#node']->field_parent_page[LANGUAGE_NONE][0]['target_id'])) {
+		$parent = $form['#node']->field_parent_page[LANGUAGE_NONE][0]['target_id'];
+	}
+	$form_state['redirect'] = 'node/' . $parent;
+}
+
+
+function mcmaster_hs_library_leading_text_alter_textformat_options(&$element) {
+	// set to leading text and remove the other options!
+	$element[LANGUAGE_NONE][0]['format']['format']['#default_value'] = 'intro_text';
+	$element[LANGUAGE_NONE][0]['format']['format']['#value'] = 'intro_text';
+	$element[LANGUAGE_NONE][0]['format']['format']['#options'] = array('leading_text' => 'Intro Text');
+	
+	// hide the element so no changes can be made anyway
+	$element[LANGUAGE_NONE][0]['format']['#access'] = false;
+	
+	return $element;
+	
+}
+
+
+function mcmaster_hs_library_node_delete($node) {
+	// clean up children if deleting a node type such as section, highlight box content, etc
+	$delete_nids = array();
+	$nodes_with_sections = array('page');
+	
+	if (in_array($node->type,$nodes_with_sections)) {
+		$sections_view = views_get_view_result('page_sections','block',$node->nid);
+		foreach ($sections_view as $x => $v) {
+			$delete_nids[] = $v->nid;
+		}
+	}
+	
+	if ($node->type == 'page_section') {
+		$scontent_view = views_get_view_result('section_content','block',$node->nid);
+		foreach ($scontent_view as $x => $v) {
+			$delete_nids[] = $v->nid;
+		}
+	}
+	
+	if ($node->type == 'highlight_boxes_content') {
+		$hboxes_view = views_get_view_result('highlight_boxes','block',$node->nid);
+		foreach ($hboxes_view as $x => $v) {
+			$delete_nids[] = $v->nid;
+		}
+	}	
+	
+	// page banners too
+	
+	if (!empty($delete_nids)) {
+		node_delete_multiple($delete_nids);
+	}
+}
+
+
+function mcmaster_hs_library_create_section($parent) {
+	global $user;
+	$node = new stdClass();
+	$node->title = $parent->title . " Overview";
+	$node->type = "page_section";
+	node_object_prepare($node); // Sets some defaults. Invokes hook_prepare() and hook_node_prepare().
+	$node->language = LANGUAGE_NONE; // Or e.g. 'en' if locale is enabled
+	$node->uid = $user->uid; 
+	$node->status = 1; //(1 or 0): published or not
+	$node->promote = 0; //(1 or 0): promoted to front page
+	$node->comment = 0; // 0 = comments disabled, 1 = read only, 2 = read/write
+
+	// Entity reference field
+	$node->field_parent_page[$node->language][] = array(
+		'target_id' => $parent->nid,
+		'target_type' => 'node',
+	);
+	
+	$node->field_hide_title[$node->language][] = array(
+		'value' => 1,
+	);
+	
+	$node->field_tab_title[$node->language][] = array(
+		'value' => 'Overview',
+	);
+	
+	$node = node_submit($node); // Prepare node for saving
+	node_save($node);
+	drupal_goto('node/' . $parent->nid);
+	
+}
+
+
+function mcmaster_hs_library_format_phone_link($phone) {
+	// return a tel: friendly value
+	// separate the value into phone and extension data
+	$ext = '';
+	preg_match("/e*x\D*\.*\s*\d+.*$/i", $phone, $extension);
+	if (!empty($extension[0])) {
+		$ext = preg_replace("/\D/","",$extension[0]);
+		$ext = 'p' . $ext;
+		$phone = str_replace($extension[0],"",$phone);
+	}
+	$phone = preg_replace("/\D/","",$phone);
+	return $phone . $ext;
+}
+
+
+function mcmaster_hs_library_format_section_name($n) {
+	module_load_include('inc', 'pathauto', 'pathauto');
+	$name = pathauto_cleanstring($n);
+	// add tab to name to prevent errors with ids starting with a number
+	$name = 'tab-' . $name;
+	return $name;
+}
+
+
+function mcmaster_hs_library_cron() {
+	_hs_library_sync_libguide_subjects();
+	_hs_library_sync_libguides();
+}
+
+
+function _hs_library_sync_libguide_groups($GUIDES) {
+	$GROUPS = array();
+	// get the tags from the guides - only published ones though
+	foreach ($GUIDES as $x => $v) {
+		if ((!empty($v['tags'])) && ($v['status'] == 1)) {
+			foreach ($v['tags'] as $i => $t) {
+				$GROUPS[$t['id']] = $t['text'];
+			}
+		}
+	}
+	
+	// watchdog('hslibrary','<pre>' . print_r($GUIDES,true) . '</pre>');
+	
+	$D_GROUPS = array();
+	$libguide_group_vocab = taxonomy_vocabulary_machine_name_load('libguide_groups');
+	$D_GROUPS = taxonomy_get_tree($libguide_group_vocab->vid,0,NULL,true);
+	
+	foreach ($GROUPS as $x => $v) {
+		$existing_group = false;
+		foreach ($D_GROUPS as $i => $g) {
+			if ($g->field_libguide_id[LANGUAGE_NONE][0]['value'] == $x) {
+				$existing_group = $g;
+				break;
+			}
+		}
+		
+		if ($existing_group) {
+			$existing_group->name = $v;
+			taxonomy_term_save($existing_group); // $existing_group is the term object found so it can be updated and saved
+		}
+		else {
+			$term = new stdClass();
+			$term->name = $v;  
+			$term->vid = $libguide_group_vocab->vid;
+			$term->field_libguide_id[LANGUAGE_NONE][0]['value'] = $x;
+			taxonomy_term_save($term);
+		}
+	}
+	// TBD if we need to check for tags that no longer exist in libguides and then removed from content and deleted
+}
+
+
+function _hs_library_sync_libguide_subjects() {
+	$SUBJECTS = _hs_library_get_libguide_subjects();
+	$D_SUBJECTS = array();
+	$libguide_subject_vocab = taxonomy_vocabulary_machine_name_load('libguide_subjects');
+	$D_SUBJECTS = taxonomy_get_tree($libguide_subject_vocab->vid,0,NULL,true);
+	
+	foreach ($SUBJECTS as $x => $v) {
+		$existing_subject = false;
+		foreach ($D_SUBJECTS as $i => $s) {
+			if ($s->field_libguide_id[LANGUAGE_NONE][0]['value'] == $v['id']) {
+				$existing_subject = $s;
+				break;
+			}
+		}
+		
+		if ($existing_subject) {
+			$existing_subject->name = $v['name'];
+			taxonomy_term_save($existing_subject); // $existing_subject is the term object found so it can be updated and saved
+		}
+		else {
+			$term = new stdClass();
+			$term->name = $v['name'];  
+			$term->vid = $libguide_subject_vocab->vid;
+			$term->field_libguide_id[LANGUAGE_NONE][0]['value'] = $v['id'];
+			taxonomy_term_save($term);
+		}
+	}
+	// TBD if we need to check for tags that no longer exist in libguides and then removed from content and deleted
+}
+
+function _hs_library_get_libguide_subjects() {
+	$SUBJECTS = array();
+	
+	$url = LIBGUIDES_URL . '/1.1/subjects';
+
+	$fields = array(
+		'site_id' => '2408',
+		'key' => '94c653aaede62e7ef9e431de557db982',
+		'guide_published' => 2,
+	);
+	$fields_params = http_build_query($fields);
+
+	$url .= '?' . $fields_params;
+
+	$ch = curl_init();
+	curl_setopt($ch,CURLOPT_URL, $url);
+	curl_setopt($ch,CURLOPT_RETURNTRANSFER,1);
+	$headers = [
+		'Content-type: application/x-www-form-urlencoded',
+		'Accept: application/json',
+	];
+	curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+	$result = curl_exec($ch);
+	curl_close($ch);
+
+	if (isJson($result)) {
+		$SUBJECTS = json_decode($result,true);
+	}
+	else {
+		// something went wrong ... watchdog it
+	}
+	
+	return $SUBJECTS;
+}
+
+
+function _hs_library_sync_libguides() {
+	// get the current libguides 
+	$GUIDES = _hs_library_get_libguides();
+
+	_hs_library_sync_libguide_groups($GUIDES); // sync the groups first to create any necessary group taxonomies so we can update the guides with this info
+	
+	$D_GUIDES = views_get_view_result('libguides','block');
+	$libguide_subject_vocab = taxonomy_vocabulary_machine_name_load('libguide_subjects');
+	$D_SUBJECTS = taxonomy_get_tree($libguide_subject_vocab->vid,0,NULL,true);
+	$libguide_group_vocab = taxonomy_vocabulary_machine_name_load('libguide_groups');
+	$D_GROUPS = taxonomy_get_tree($libguide_group_vocab->vid,0,NULL,true);
+	
+	foreach ($GUIDES as $x => $v) {
+		// see if guide exists on the site
+		$existing_guide = false;
+		//watchdog('mac_hs_library', '<pre>GUIDE: ' . print_r($GUIDES) . '</pre>');
+		foreach ($D_GUIDES as $i => $g) {
+			if (isset($g->field_field_libguide_id[0]) && $g->field_field_libguide_id[0]['raw']['value'] == $v['id']) {
+				$existing_guide = $g->nid;
+				break;
+			}
+		}
+
+		$collect = false;
+		$field = field_info_field('field_guide_type');
+		$allowed_values = list_allowed_values($field);
+		foreach ( $allowed_values as $key => $value ) {
+			if( $key == $v['type_id'] ) {
+				$collect = true;
+			} 
+		}
+		
+		if ($existing_guide) {
+			if ($v['status'] != 1 || $collect == false ) {
+				node_delete($existing_guide); // delete it
+			}
+			else {
+				// remove taxonomies and re-attach and update the description, title, and url
+				$node = node_load($existing_guide);
+				$node->title = $v['name'];
+				$node->field_intro_text[$node->language][0]['value'] = $v['description'];
+				$node->field_link[$node->language][0]['url'] = (empty($v['friendly_url']) ? $v['url'] : $v['friendly_url']);
+				unset($node->field_guide_type[$node->language]);
+				unset($node->field_program[$node->language]);
+				unset($node->field_user_group[$node->language]);
+				$node->field_guide_type[$node->language][]['value'] = $v['type_id'];
+
+				$field = field_info_field('field_guide_type');
+				$allowed_values = list_allowed_values($field);
+
+				
+				if (!empty($v['subjects'])) {
+					foreach ($v['subjects'] as $i => $s) {
+						$tid = false;
+						foreach ($D_SUBJECTS as $k => $t) {
+							if ($s['id'] == $t->field_libguide_id[LANGUAGE_NONE][0]['value']) {
+								$tid = $t->tid;
+								break;
+							}
+						}
+						if ($tid) {
+							$node->field_program[$node->language][]['tid'] = $tid;
+						}
+					}
+				}
+				if (!empty($v['tags'])) {
+					foreach ($v['tags'] as $i => $s) {
+						$tid = false;
+						foreach ($D_GROUPS as $k => $t) {
+							if ($s['id'] == $t->field_libguide_id[LANGUAGE_NONE][0]['value']) {
+								$tid = $t->tid;
+								break;
+							}
+						}
+						if ($tid) {
+							$node->field_user_group[$node->language][]['tid'] = $tid;
+						}
+					}
+				}
+				node_save($node);
+			}
+		}
+		elseif( $collect ) {
+			// else if new
+			// drupal_set_message($v['name'] . ' DOES NOT EXIST! (' . $v['status'] . ')');
+			if ($v['status'] == 1) {
+				$node = new stdClass();
+				$node->title = $v['name'];
+				$node->type = "guide";
+				node_object_prepare($node);
+				$node->language = LANGUAGE_NONE;
+				$node->uid = 1; 
+				$node->status = 1;
+				$node->promote = 0;
+				$node->comment = 0;
+				$node->field_intro_text[$node->language][]['value'] = $v['description'];
+				$node->field_link[$node->language][]['url'] = (empty($v['friendly_url']) ? 'https:' . $v['url'] : 'https:' . $v['friendly_url']);
+				$node->field_libguide_id[$node->language][]['value'] = $v['id'];
+				$node->field_guide_type[$node->language][]['value'] = $v['type_id'];
+				
+				if (!empty($v['subjects'])) {
+					foreach ($v['subjects'] as $i => $s) {
+						$tid = false;
+						foreach ($D_SUBJECTS as $k => $t) {
+							if ($s['id'] == $t->field_libguide_id[LANGUAGE_NONE][0]['value']) {
+								$tid = $t->tid;
+								break;
+							}
+						}
+						if ($tid) {
+							$node->field_program[$node->language][]['tid'] = $tid;
+						}
+					}
+				}
+				if (!empty($v['tags'])) {
+					foreach ($v['tags'] as $i => $s) {
+						$tid = false;
+						foreach ($D_GROUPS as $k => $t) {
+							if ($s['id'] == $t->field_libguide_id[LANGUAGE_NONE][0]['value']) {
+								$tid = $t->tid;
+								break;
+							}
+						}
+						if ($tid) {
+							$node->field_user_group[$node->language][]['tid'] = $tid;
+						}
+					}
+				}
+				
+				$node = node_submit($node);
+				node_save($node);
+			}
+		}
+	
+	}
+	// watchdog('mac_hs_library','<pre>' . print_r($GUIDES,true) . '</pre>');
+	watchdog('mac_hs_library','Libguide Sync Complete');
+}
+
+function _hs_library_get_libguides() {
+	$GUIDES = array();
+	
+	$url = LIBGUIDES_URL . '/1.1/guides';
+
+	$fields = array(
+		'site_id' => '2408',
+		'key' => '94c653aaede62e7ef9e431de557db982',
+		'status' => 1,
+		'expand' => 'subjects,group,tags',
+	);
+	$fields_params = http_build_query($fields);
+
+	$url .= '?' . $fields_params;
+
+	$ch = curl_init();
+	curl_setopt($ch,CURLOPT_URL, $url);
+	curl_setopt($ch,CURLOPT_RETURNTRANSFER, true);
+	$headers = [
+		'Content-type: application/x-www-form-urlencoded',
+		'Accept: application/json',
+	];
+	curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+	$result = curl_exec($ch);
+	curl_close($ch);
+
+	watchdog('mac_hs_library','<pre>' . $url . '</pre>');
+
+	watchdog('mac_hs_library', $result );
+
+	if (isJson($result)) {
+		$GUIDES = json_decode($result,true);
+		watchdog('mac_hs_library', $GUIDES );
+
+	}
+	else {
+		// something went wrong ... watchdog it
+		watchdog('mac_hs_library','SYNC ERROR');
+	}
+	
+	return $GUIDES;
+}
+
+function isJson($string) {
+	json_decode($string);
+	return (json_last_error() == JSON_ERROR_NONE);
+}
+
+
+function _hs_library_get_todays_hours() {
+	$today_json = file_get_contents('https://api3-ca.libcal.com/api_hours_today.php?iid=3019&lid=1804&format=json&systemTime=1');
+	if (isJson($today_json)) {
+		$TODAY = json_decode($today_json,true);
+	}
+	
+	$TODAY_HOURS = array();
+	
+	if (!empty($TODAY['locations'])) {
+		foreach ($TODAY['locations'] as $x => $v) {
+			$TODAY_HOURS[$v['lid']] = array(
+				'times' => $v['times'],
+				'category' => $v['category'],
+				'name' => $v['name'],
+			);
+		}
+	}
+
+	$TODAY_HOURS['all']['name'] = '<a href="/about/contact#tab-hours">View All Hours</a>';
+	$TODAY_HOURS['all']['times'] = 'none';
+	
+	return $TODAY_HOURS;
+}
+
+
+function _hs_library_get_upcoming_workshops() {
+	// get auth token
+	$url = LIBCAL_URL . '/1.1/oauth/token';
+	$fields = array(
+		'client_id' => '56',
+		'client_secret' => '10b9e17208b5578bd9029d104f43040c',
+		'grant_type' => 'client_credentials',
+	);
+	$fields_params = http_build_query($fields);
+
+	$ch = curl_init();
+	curl_setopt($ch,CURLOPT_URL, $url);
+	curl_setopt($ch,CURLOPT_RETURNTRANSFER,1);
+	curl_setopt($ch,CURLOPT_POST, count($fields));
+	curl_setopt($ch,CURLOPT_POSTFIELDS, $fields_params);
+		$headers = [
+			'Content-type: application/x-www-form-urlencoded',
+			'Accept: application/json',
+		];
+	curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+	$result = curl_exec($ch);
+	curl_close($ch);
+	
+	$decoded_result = json_decode($result,true);
+
+	$AUTH_TOKEN = (!empty($decoded_result['access_token']) ? $decoded_result['access_token'] : '');
+
+	if (empty($AUTH_TOKEN)) {
+		echo 'UNABLE TO GET AUTH TOKEN';
+		exit;
+	}
+	
+	$url = LIBCAL_URL . '/1.1/events';
+	$fields = array(
+		'cal_id' => '1371',
+		'date' => date('Y-M-d'),
+		'days' => 365,
+		'limit' => 50,
+	);
+	$fields_params = http_build_query($fields);
+	$url .= '?' . $fields_params;
+	
+	$ch = curl_init();
+	curl_setopt($ch,CURLOPT_URL, $url);
+	curl_setopt($ch,CURLOPT_RETURNTRANSFER,1);
+	$headers = [
+		'Content-type: application/x-www-form-urlencoded',
+		'Accept: application/json',
+		'Authorization: Bearer ' . $AUTH_TOKEN,
+	];
+	curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+	$result = curl_exec($ch);
+	// $last_request_info = curl_getinfo($ch);
+	curl_close($ch);
+	// echo '<pre>' . print_r($last_request_info,true) . '</pre>';
+	
+	if (isJson($result)) {
+		$decoded_result = json_decode($result,true);
+		//echo '<pre>' . print_r($decoded_result,true) . '</pre>';
+	}
+	
+	$EVENTS = (!empty($decoded_result['events']) ? $decoded_result['events'] : array());
+	
+	if (empty($EVENTS)) {
+		echo 'No upcoming events';
+		// exit;
+	}
+
+	
+	foreach ($EVENTS as $i => $e) {
+		echo '<div class="row">';
+			echo '<div class="col-md-8">';
+			echo '<h2><a href="' . $e['url']['public'] . '" target="_blank">' . $e['title'] . '</a></h2>';
+			echo $e['description'];
+			echo '</div>';
+			
+			echo '<div class="col-md-4">';
+			if (!empty($e['featured_image'])) {
+				echo '<img src="' . $e['featured_image'] . '" class="img-responsive">';
+			}
+			echo '<p><span class="fa fa-calendar-o"></span> ';
+			if (!empty($e['allday'])) {
+				echo date('F jS, Y', strtotime($e['start']));
+			}
+			else {
+				echo date('F jS, Y h:i a', strtotime($e['start'])) . ' - ';
+				if (date('z',strtotime($e['start'])) == date('z',strtotime($e['end']))) {
+					echo date('h:i a', strtotime($e['end']));
+				}
+				else {
+					date('F jS, Y h:i a', strtotime($e['end']));
+				}
+			}
+			if (!empty($e['location']['name'])) {
+				echo '<br/><span class="fa fa-building-o"></span> ' . $e['location']['name'];
+			}
+			if (!empty($e['presenter'])) {
+				echo '<br/><span class="fa fa-user-o"></span> ' . $e['presenter'];
+			}
+			echo '</p>';
+			
+			if (!empty($e['registration'])) {
+				$seats_available = true;
+				$seats_left = 0;
+				if (!empty($e['seats'])) {
+					$seats_left = $e['seats'] - $e['seats_taken'];
+					if ($seats_left <= 0) {
+						$seats_available = false;
+					}
+					else {
+						echo '<strong>' . $seats_left . ' seats remaining.</strong>';
+					}
+				}
+				if ($seats_available) {
+					echo '<p><a href="' . $e['url']['public'] . '" target="_blank" class="btn btn-primary">Register</a></p>';
+				}
+				else {
+					echo 'EVENT FULL';
+				}
+			}
+			
+			echo '</div>';
+		echo '</div>';
+		
+		echo '<hr>';
+		
+		
+	}
+	
+}

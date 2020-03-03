@@ -1,0 +1,4 @@
+name = MAC HS Library
+description = Helper functions for the MAC HS Library Site
+core = 7.x
+package = MAC

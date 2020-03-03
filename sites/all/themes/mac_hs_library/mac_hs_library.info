@@ -1,0 +1,31 @@
+name = McMaster HS Library Theme
+core = 7.x
+engine = phptemplate
+
+regions[mac_header] = MAC Header
+
+regions[site_menu] = Site Menu
+regions[helper_menu] = Helper Menu
+
+regions[page_banner] = Page Banner
+regions[page_header] = Page Header
+
+regions[pre_content] = Pre Content
+
+regions[abovecontent] = Above Content
+regions[content] = Content
+regions[belowcontent] = Below Content
+
+regions[post_content] = Post Content
+
+regions[site_footer] = Site Footer
+
+regions[help] = Help
+
+
+stylesheets[all][] = assets/css/bundle.css
+stylesheets[all][] = assets/css/local.css
+
+
+scripts[] = assets/js/bundle.js
+scripts[] = assets/js/maclibrary.js
