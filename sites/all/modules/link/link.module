@@ -538,12 +538,14 @@ function _link_sanitize(&$item, $delta, &$field, $instance, &$entity) {
   // reference we need to ensure that there's always the original data to
   // process otherwise processed data are processed again which might leads to
   // unexpected results.
+  /* temp hotfix https://www.drupal.org/files/issues/2019-11-27/link-url-truncated-after-last-update-3095484-1.patch
   if (isset($item['_link_sanitized'])) {
     return;
   }
 
   // Store a flag to check in case of a second call.
   $item['_link_sanitized'] = TRUE;
+  */
 
   // Don't try to process empty links.
   if (empty($item['url']) && empty($item['title'])) {
@@ -589,45 +591,44 @@ function _link_sanitize(&$item, $delta, &$field, $instance, &$entity) {
   $url_parts = _link_parse_url($url);
 
   if (!empty($url_parts['url'])) {
-    /*Patch for ezproxy based on https://drupal.org/project/link/issues/2785651 and modified to work with version 7.x-1.7
+    /* Patch for ezproxy based on https://www.drupal.org/project/link/issues/2785651 
+       and modified to work with version 7.x-1.7
     */
-
-          if (preg_match('@^(http://libacess.mcmaster.ca/login)@i',$url_parts['url'])==1 &&
+    if (preg_match('@^(http://libaccess.mcmaster.ca/login)@i',$url_parts['url'])==1 &&
         isset($url_parts['query']['url']) &&
-        preg_match('@^(?:https?://)?([^/]+)@i',$url_parts['query']['url'])==1 )
-      {
-
-        $item = array(
-          'url' => $url_parts['url'].'?url=' .$url_parts['query']['url'],
-          'query' => NULL,
-          'fragment' => isset($url_parts['fragment']) ? $url_parts['fragment'] : NULL,
-          'absolute' => !empty($instance['settings']['absolute_url']),
-          'html' => TRUE, 
-          ) + $item;
-          } else {
-
-          }
-
-        $item['url']=url($url_parts['url'].'?url='.$url_parts['query']['url']     ,['fragment'=>isset($url_parts['fragment'])?$url_parts['fragment']:NULL
-  ,'absolute'=>!empty($instance['settings']['absolute_url'])
-  ,'html'=>TRUE,]);
-      }
-      else
-      {
-        
-  
+        preg_match('@^(?:https?://)?([^/]+)@i',$url_parts['query']['url'])==1) {
     $item = array(
+      'url' => $url_parts['url'].'?url='.$url_parts['query']['url'],
+      'query' => NULL,
+      'fragment' => isset($url_parts['fragment']) ? $url_parts['fragment'] : NULL,
+      'absolute' => !empty($instance['settings']['absolute_url']),
+      'html' => TRUE,
+    ) + $item;    
+    
+    } else {    
+    
+/*    $item = array(
       'url' => $url_parts['url'],
       'query' => isset($url_parts['query']) ? $url_parts['query'] : NULL,
       'fragment' => isset($url_parts['fragment']) ? $url_parts['fragment'] : NULL,
       'absolute' => !empty($instance['settings']['absolute_url']),
       'html' => TRUE,
     ) + $item;
+*/
+
+ $item['url'] = url($url_parts['url'],
+      array(
+        'query' => isset($url_parts['query']) ? $url_parts['query'] : NULL,
+        'fragment' => isset($url_parts['fragment']) ? $url_parts['fragment'] : NULL,
+        'absolute' => !empty($instance['settings']['absolute_url']),
+        'html' => TRUE,
+      )
+    );
+
+    }
   }
-}
+
   // Create a shortened URL for display.
-
-
   if ($type == LINK_EMAIL) {
     $display_url = str_replace('mailto:', '', $url);
   }
@@ -845,7 +846,10 @@ function _link_parse_url($url) {
  */
 function _link_parse_str($query) {
   $query_array = array();
-
+  // Debbie Lawlor - work around for ezproxy links since function was causing problems with ESBCOHOST URL which had multiple parameters named defaultdb
+  if (strpos($query, "url=")===0) {
+    $query=str_replace('&','%26',$query);
+  }
   $pairs = explode('&', $query);
   foreach ($pairs as $pair) {
     $name_value = explode('=', $pair, 2);
